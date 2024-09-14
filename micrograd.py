@@ -1,4 +1,6 @@
 import math 
+from utils import RNG,gen_data_yinyang,draw_dot,vis_color
+random=RNG(50)
 
 class Value: #store a single scalar value and the gradient 
     def __init__(self,data,_prev=(),_op=''):
@@ -8,7 +10,6 @@ class Value: #store a single scalar value and the gradient
         self._backward=lambda: None
         self._prev=_prev
         self._op=_op
-
     def __add__(self,other):
         other=other if isinstance(other,Value) else Value(other)
         out= Value(self.data+other.data,(self,other),'+')
@@ -17,7 +18,6 @@ class Value: #store a single scalar value and the gradient
             other.grad+=out.grad
         out._backward=_backward
         return out
-    
     def __mul__(self,other):
         other= other if isinstance(other,Value) else Value(other)
         out=Value(self.data * other.data,(self,other),'*')
@@ -25,37 +25,32 @@ class Value: #store a single scalar value and the gradient
             self.grad+=other.data * out.grad
             other.grad+=self.data * out.grad
         out._backward=_backward
-        return out
-    
+        return out  
     def __pow__(self,other):
         assert isinstance(other,(int,float)), "only support int/float powers"
         out=Value(self.data**other,(self),f'**{other}')
         def _backward():
             self.grad+=(other*self.data**(other-1))*out.grad
         out._backward=_backward
-        return out
-    
+        return out   
     def relu(self):
         out=Value(0 if self.data <0 else self.data,(self,),"ReLU")
         def _backward():
             self.grad+=(1-out.data**2) * out.grad
         out._backward=_backward
-        return out
-    
+        return out   
     def exp(self):
         out=Value(math.exp(self.data),(self,),'exp')
         def _backward():
             self.grad+=out.data*out.grad
         out._backward=_backward
         return out
-    
     def log(self):
         out=Value(math.log(self.data),(self,),'log')
         def _backward():
             self.grad+=(1/self.data) * out.grad
         out._backward=_backward
         return out
-
     def backward(self): #topological order of allthe childern in the graph
         topo=[]
         visited=set()
@@ -65,14 +60,11 @@ class Value: #store a single scalar value and the gradient
                 for child in v._prev:
                     build_topo(child)
                 topo.append(v)
-        
         build_topo(self)
-
         #go one variable at a time and apply chain rule 
         self.grad=1
         for v in reversed(topo):
             v._backward()
-
         def __neg__(self): # -self
             return self * -1.0
         def __radd__(self,other): # other +self
@@ -90,8 +82,48 @@ class Value: #store a single scalar value and the gradient
         def __repr__(self):
             return f"Value(data={self.data}, grad={self.grad})"
 
-    
-
-
+##### MLP ####
+class Module:
+    def zero_grad(self):
+        for p in self.parameter():
+            p.grad=0
+    def parameters(self):
+        return []
+class Neuron(Module):
+    def __init__(self,nin,nonlin=True):
+        self.w=[Value(random.uniform(-1,1)* nin**-0.5) for _ in range(nin)]
+        self.b=Value(0)
+        self.nonlin=nonlin
+        # color the neuron params light green (only used in graphviz visualization)
+        vis_color([self.b]+self.w,"lightgreen")
+    def __call__(self,x):
+        act=sum((wi*xi for wi,xi in zip(self.w,x)),self.b)
+        return act.tanh() if self.nonlin else act
+    def parameters(self):
+        return self.w+[self.b]
+    def __repr__(self):
+        return f"{'TanH' if self.nonlin else 'Linear'}Neuron{len(self.w)}"
+class Layer(Module):
+    def __init__(self,nin,nout,**kwargs):
+        self.neurons=[Neuron(nin,**kwargs) for _ in range(nout)]
+    def __call__(self,x):
+        out=[n(x) for n in self.neurons]
+        return out
+    def parameters(self):
+        return [p for n in self.neurons for p in n.parameters()]
+    def __repr__(self):
+        return f"Layer of [{', '.join(str(n) for n in self.neurons)}]"
+class MLP(Module):
+    def __init__(self,nin,nouts):
+        sz=[nin]+nouts
+        self.layers=[Layer(sz[i],sz[i+1], nonlin=i!=len(nouts)-1) for i in range(len(nouts))] 
+    def __call__(self,x):
+        for layer in self.layers:
+            x=layer(x)
+        return x
+    def parameters(self):
+        return [p for layer in self.layers for p in layer.parameters() ]
+    def __repr__(self):
+        return f"MLP of [{', '.join(str(layer) for layer in self.layers)}]"
 
 
